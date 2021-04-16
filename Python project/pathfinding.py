@@ -1,4 +1,5 @@
-# !!!Deprecated file!!!
+"""This file is deprecated, was used while testing options for pathfinding but eventually discarded"""
+
 
 class Node:
     def __init__(self, parent=None, position=None):
