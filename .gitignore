@@ -118,3 +118,5 @@ dmypy.json
 
 # Test files
 demo.py
+save.txt
+*/img/*

@@ -2,13 +2,11 @@ import math
 
 
 class Agent:
-    def __init__(self, pos, starting_strategy):
+    def __init__(self, pos, starting_strategy, t_aset, t_0, order_payoff, deterrent):
         """Create new agent"""
         self._pos, self._strategy, self._last_strategy = pos, starting_strategy, starting_strategy
         self._distance_to_exit = 0
-        self._order_payoff = 1
-        self._t_aset = 20
-        self._t0 = 10
+        self._t_aset, self._t0, self._order_payoff, self._deterrent = t_aset, t_0, order_payoff, deterrent
         # Dictionary that returns the cost of each types, if both patient or impatient this must be calculated at runtime
         self._cost_table = {'i': {'i': 'ii', 'p': (-1, 1), 'n': (0, 0)},
                             'p': {'i': (1, -1), 'p': 'pp', 'n': (0, 0)},
@@ -18,7 +16,7 @@ class Agent:
         self._possible_strategies = ['p', 'i', 'n']
         self._route_taken = [pos]
         # Dictionary that stores positions and their current deterrent
-        self._route_taken_deterrent = {pos : 0.001}
+        self._route_taken_deterrent = {pos : self._deterrent}
 
     def get_pos(self):
         """Accessor method"""
@@ -54,7 +52,7 @@ class Agent:
 
     def _calculate_delta_u(self, t_ij, c):
         """Returns value of delta u using provided values of t_ij and c"""
-        if t_ij <= self._t_aset - self._t0:
+        if t_ij < self._t_aset - self._t0:
             return 0
         return (c / self._t0) * (t_ij - self._t_aset + self._t0)
 
@@ -86,7 +84,7 @@ class Agent:
                     if p_cost != 'pp':
                         sum_patient += p_cost[0]
                     else:
-                        sum_impatient += self.calculate_pp_cost(agent.get_t_i(), c)
+                        sum_patient += self.calculate_pp_cost(agent.get_t_i(), c)
                     # Get cost to be impatient
                     i_cost = self._cost_table['i'][agent.get_strategy()]
                     if i_cost != 'ii':
@@ -97,18 +95,22 @@ class Agent:
                     n_cost = self._cost_table['n'][agent.get_strategy()]
                     sum_neutral += n_cost[0]
 
-        # Choose the strategy with the lowest cost
-        lowest_cost = min(sum_patient, sum_impatient, sum_neutral)
-        if lowest_cost == sum_patient:
-            self._strategy = 'p'
-            chosen_strategy = 'be patient'
-        elif lowest_cost == sum_neutral:
-            self._strategy = 'n'
-            chosen_strategy = 'be neutral'
+        if sum_patient == sum_impatient == sum_neutral:
+            # If no clear strategy, stay with current strategy
+            self._strategy = self._last_strategy
+            chosen_strategy = 'stay with their current strategy'
         else:
-            self._strategy = 'i'
-            chosen_strategy = 'be impatient'
-
+            # Choose the strategy with the lowest cost
+            lowest_cost = min(sum_patient, sum_impatient, sum_neutral)
+            if lowest_cost == sum_patient:
+                self._strategy = 'p'
+                chosen_strategy = 'be patient'
+            elif lowest_cost == sum_impatient:
+                self._strategy = 'i'
+                chosen_strategy = 'be impatient'
+            else:
+                self._strategy = 'n'
+                chosen_strategy = 'be neutral'
         print(f'Agent at: {self._pos} chose to {chosen_strategy}. There cost to be patient was: {sum_patient}, their cost to be impatient was: {sum_impatient}, and their cost to be neutral was: {sum_neutral}.')
 
     def move_to_new_strategy(self):
@@ -126,7 +128,7 @@ class Agent:
         if pos in self._route_taken_deterrent:
             self._route_taken_deterrent[pos] /= 2
         else:
-            self._route_taken_deterrent[pos] = 0.001
+            self._route_taken_deterrent[pos] = self._deterrent
 
     def get_route_taken(self):
         """Accessor method"""

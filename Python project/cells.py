@@ -15,7 +15,12 @@ class Cell:
     def _calculate_sf(self):
         """Calculates sf value based on distance to the exit between 1 and 0"""
         distance_to_exit = math.sqrt((self._pos[0] - self._exit_pos[0]) ** 2 + (self._pos[1] - self._exit_pos[1]) ** 2)
-        max_distance = math.sqrt((self._grid_size[0] - 1) ** 2 + (self._grid_size[1] - 1) ** 2)
+        max_distance = largest([
+            math.sqrt(((self._grid_size[0] - self._exit_pos[0]) ** 2) + ((self._grid_size[1] - self._exit_pos[1]) ** 2)),
+            math.sqrt((self._exit_pos[0] ** 2) + (self._exit_pos[1] ** 2)),
+            math.sqrt(((self._grid_size[0] - self._exit_pos[0]) ** 2) + (self._exit_pos[1] ** 2)),
+            math.sqrt((self._exit_pos[0] ** 2) + ((self._grid_size[1] - self._exit_pos[1]) ** 2))
+        ])
         self._sf = 1 - (distance_to_exit / max_distance)
 
     def get_sf(self):

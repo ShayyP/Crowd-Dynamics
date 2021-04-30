@@ -10,7 +10,7 @@ import time
 
 
 class SpatialDynamics:
-    def __init__(self, grid_size, cell_size, exit_pos, exit_capacity, cost_of_congestion, df_diffuse_rate, df_increase, df_strength, sf_strength, show_probs=True):
+    def __init__(self, grid_size, cell_size, exit_pos, exit_capacity, cost_of_congestion, df_diffuse_rate, df_increase, df_strength, sf_strength, t_aset, t_0, order_payoff, repeat_deterrent, auto_scale_sf=False, show_probs=True):
         """Creates the simulation"""
         # Model parameters
         self._c, self._df_diffuse_rate, self._df_increase, self._df_strength, self._sf_strength = cost_of_congestion, df_diffuse_rate, df_increase, df_strength, sf_strength
@@ -24,8 +24,13 @@ class SpatialDynamics:
         # Core variables used in simulation
         self._agents, self._grid, self._patient_distribution, self._impatient_distribution, self._neutral_distribution = [], [], [], [], []
         self._time = 0
+        self._t_aset, self._t_0, self._order_payoff, self._repeat_deterrent = t_aset, t_0, order_payoff, repeat_deterrent
         # Create grid after initialisation
         self._create_grid()
+        # Scales sf and df to match grid size, on larger grids keeping these at 1 makes probability difference minimal so agents get stuck
+        if auto_scale_sf:
+            multi = grid_size[0] + grid_size[1]
+            self._df_strength, self._sf_strength = multi, multi
 
     def fill_grid_random(self, patient_weight, impatient_weight, neutral_weight):
         """Optional method that fills the grid with agents, random but weighted"""
@@ -46,13 +51,19 @@ class SpatialDynamics:
                 else:
                     row.append(Cell((x, y), self._grid_size, self._exit_pos))
             self._grid.append(row)
+        print('\nGrid sf values:')
+        for row in self._grid:
+            for column in row:
+                if not column.is_wall():
+                    print('%.3f' % column.get_sf(), end=' | ')
+            print()
 
     def _add_agent(self, pos, strategy):
         """Adds an agent to the grid if it is within the bounds and there is nothing at that position already"""
         if strategy in ['p', 'i', 'n'] and 0 <= pos[0] <= self._grid_size[0] - 1 and 0 <= pos[1] <= self._grid_size[1] - 1:
             space_taken = self._grid[pos[1]][pos[0]].get_occupied_multiplier()
             if not space_taken:
-                self._agents.append(Agent(pos, strategy))
+                self._agents.append(Agent(pos, strategy, self._t_aset, self._t_0, self._order_payoff, self._repeat_deterrent))
                 self._grid[pos[1]][pos[0]].set_occupied(True)
                 return True
             if not self._grid[pos[1]][pos[0]].is_wall():
@@ -102,9 +113,10 @@ class SpatialDynamics:
         # Calculate probability to move to each neighbouring cell
         for agent in self._agents:
             agent_moves, agent_probabilities = [], []
+            print(f'\nMove probabilities for agent at {agent.get_pos()}:')
             # Loop through cells in Moore neighbourhood
-            for x in range(-1, 2):
-                for y in range(-1, 2):
+            for y in range(-1, 2):
+                for x in range(-1, 2):
                     move = (agent.get_pos()[0] + x, agent.get_pos()[1] + y)
                     cell = self._grid[move[1]][move[0]]
                     sf_multiplier, df_multiplier = 1, 1
@@ -114,22 +126,28 @@ class SpatialDynamics:
                     # If agent is neutral, they are more inclined to follow other agents, this is reflected by increasing df
                     elif agent.get_strategy() == 'n':
                         df_multiplier = 10
-                    # Calculate probability (not normalised)
+                    # Calculate probability (not normalised yet)
                     probability = math.pow(math.e, cell.get_df() * self._df_strength * df_multiplier) * math.pow(math.e, (cell.get_sf() * self._sf_strength * sf_multiplier)) * (1 - cell.get_occupied_multiplier())
                     # Apply deterrent to move if agent has been here already
                     if move in agent.get_route_taken():
                         probability *= agent.get_deterrent(move)
                     # Save move and probability
+                    print(pad('%.3f' % probability, 8), end=' | ')
                     agent_moves.append(move)
                     agent_probabilities.append(probability)
+                print()
 
             # Normalise the probabilities
             sum_prob = 0
             for prob in agent_probabilities:
                 sum_prob += prob
+            print(f'\nNormalised probabilities for agent at {agent.get_pos()}:')
             if sum_prob != 0:
                 for i in range(len(agent_probabilities)):
                     agent_probabilities[i] /= sum_prob
+                    print('%.3f' % agent_probabilities[i], end=' | ')
+                    if (i+1) % 3 == 0:
+                        print()
                 # Choose a move
                 chosen_move = random.choices(agent_moves, agent_probabilities)[0]
                 # Check if any other agents are attempting to move here to, if so we must resolve this after
@@ -190,13 +208,19 @@ class SpatialDynamics:
                     neutral_agents.remove(chosen_agent)
                     space_available -= 1
 
+        print('\nGrid df values:')
+        for row in self._grid:
+            for column in row:
+                if not column.is_border():
+                    print('%.3f' % column.get_df(), end=' | ')
+            print()
+
     def _move_agent(self, agent, pos):
         """Moves an agent to a specified position"""
         # If move is the exit, remove the agent from the grid and add their df trail
         if pos == self._exit_pos:
             self._grid[agent.get_pos()[1]][agent.get_pos()[0]].set_occupied(False)
-            self._grid[agent.get_pos()[1]][agent.get_pos()[0]].change_df(self._df_increase)
-            self._grid[agent.get_pos()[1]][agent.get_pos()[0]].update_to_new_df()
+            agent.move(pos)
             # Multiplier is used to scale df value dependant on how recently the agent was there
             # This encourages agents following the trail to move in the correct direction
             current_multiplier = 1
@@ -273,20 +297,8 @@ class SpatialDynamics:
 
         mouse_pos = pg.mouse.get_pos()
         highlighted_path = None
+        highlighted_colour = None
         for agent in self._agents:
-            # Check if mouse is over an agent
-            if (agent.get_pos()[0] * self._cell_size <= mouse_pos[0] <= agent.get_pos()[0] * self._cell_size+self._cell_size) and (agent.get_pos()[1] * self._cell_size <= mouse_pos[1] <= agent.get_pos()[1] * self._cell_size+self._cell_size):
-                highlighted_path = agent.get_route_taken()
-
-            # If mouse is over an agent, draw their path to the grid
-            if highlighted_path is not None:
-                last_pos = None
-                for cell in highlighted_path:
-                    if last_pos is None:
-                        last_pos = cell
-                    pg.draw.line(self._window, (255, 215, 0), (last_pos[0] * self._cell_size + (self._cell_size * 0.5), last_pos[1] * self._cell_size + (self._cell_size * 0.5)), (cell[0] * self._cell_size + (self._cell_size * 0.5), cell[1] * self._cell_size + (self._cell_size * 0.5)), 5)
-                    last_pos = cell
-
             # Draw agents to the grid, colours used are: blue for patient, red for impatient, green for neutral
             colour = (0, 0, 255)
             if agent.get_strategy() == 'i':
@@ -296,6 +308,19 @@ class SpatialDynamics:
             # Draw circle in middle of cell to represent agent
             centre_pos = ((agent.get_pos()[0]*self._cell_size)+(self._cell_size/2), (agent.get_pos()[1]*self._cell_size)+(self._cell_size/2))
             pg.draw.circle(self._window, colour, centre_pos, self._cell_size/3)
+
+            # Check if mouse is over an agent
+            if (agent.get_pos()[0] * self._cell_size <= mouse_pos[0] <= agent.get_pos()[0] * self._cell_size + self._cell_size) and (agent.get_pos()[1] * self._cell_size <= mouse_pos[1] <= agent.get_pos()[1] * self._cell_size + self._cell_size):
+                highlighted_path, highlighted_colour = agent.get_route_taken(), colour
+
+        # If mouse is over an agent, draw their path to the grid
+        if highlighted_path is not None:
+            last_pos = None
+            for cell in highlighted_path:
+                if last_pos is None:
+                    last_pos = cell
+                pg.draw.line(self._window, highlighted_colour, (last_pos[0] * self._cell_size + (self._cell_size * 0.5), last_pos[1] * self._cell_size + (self._cell_size * 0.5)),  (cell[0] * self._cell_size + (self._cell_size * 0.5), cell[1] * self._cell_size + (self._cell_size * 0.5)), 5)
+                last_pos = cell
 
         # Update the display to add the new things we drew
         pg.display.update()
@@ -345,7 +370,8 @@ class SpatialDynamics:
         ax.set_xlabel('Time')
         ax.set_ylabel('Distribution')
         ax.set_title('Change in strategy')
-        plt.show()
+        ax.set_xticklabels([])
+        plt.savefig(f'img/dist{self._time}.png')
 
     def _run_one_step(self):
         """Updates agent strategies or moves them, this changes each time it is called like a flip flop"""
@@ -357,6 +383,53 @@ class SpatialDynamics:
                 self._move_agents()
                 self._diffuse_df()
             self._move = not self._move
+            print(f'Time step: {self._time}')
+
+    def _save_setup(self):
+        """Saves current layout to text file to be loaded later"""
+        with open('save.txt', 'w') as file:
+            file.write(f'Grid size:{self._grid_size[0]},{self._grid_size[1]}\n')
+            for row in self._grid:
+                for column in row:
+                    if column.is_border():
+                        file.write('b')
+                    elif column.is_wall():
+                        file.write('w')
+                    elif column.get_occupied_multiplier() == 1:
+                        file.write('a')
+                    else:
+                        file.write('e')
+                    file.write(':')
+                file.write('\n')
+        print('Setup saved successfully.')
+
+    def _load_setup(self):
+        """Loads layout from text file"""
+        try:
+            with open('save.txt', 'r') as file:
+                size = file.readline().split(':')[1].split('\n')[0].split(',')
+                if int(size[0]) == self._grid_size[0] and int(size[1]) == self._grid_size[1]:
+                    self._agents = []
+                    for row in self._grid:
+                        for column in row:
+                            if not column.is_border():
+                                column.clear_wall()
+                    row = 0
+                    for line in file.readlines():
+                        column = 0
+                        cells = line.split(':')
+                        cells.remove('\n')
+                        for cell in cells:
+                            if cell == 'w':
+                                self._grid[row][column].add_wall()
+                            elif cell == 'a':
+                                self._add_agent((column, row), 'p')
+                            column += 1
+                        row += 1
+                else:
+                    print('Error loading from file, grid size does not match.')
+        except FileNotFoundError:
+            print('Error loading from file, no save found.')
 
     def start(self):
         """Main loop for the simulation"""
@@ -397,6 +470,12 @@ class SpatialDynamics:
                     elif event.key == pg.K_r:
                         self._auto_run = not self._auto_run
                         self._running = False
+                    # If S key pressed save the layout
+                    elif event.key == pg.K_s:
+                        self._save_setup()
+                    # If L key pressed load the layout
+                    elif event.key == pg.K_l:
+                        self._load_setup()
                 # Call while mouse down if the current mouse button being pressed is not null
                 elif self._mouse_button_down is not None:
                     self._while_mouse_down()
@@ -407,13 +486,30 @@ class SpatialDynamics:
             # Draw the grid with updated positions
             self._draw_grid()
         # Close pygame window before program ends
+        plt.show()
         pg.quit()
 
 
 if __name__ == '__main__':
     # Create instance of the simulation
-    sim = SpatialDynamics((25, 25), 35, (24, 24), 2, 2, 0.4, 1, 50, 50, False)
+    sim = SpatialDynamics(
+        grid_size=(25, 25),
+        cell_size=35,
+        exit_pos=(24, 24),
+        exit_capacity=2,
+        cost_of_congestion=2,
+        df_diffuse_rate=0.4,
+        df_increase=1,
+        df_strength=1,
+        sf_strength=1,
+        t_aset=55,
+        t_0=50,
+        order_payoff=0.15,
+        repeat_deterrent=0.01,
+        auto_scale_sf=True,
+        show_probs=False
+    )
     # Uncomment line below to pre fill grid with agents
-    # sim.fill_grid_random(0.03, 0.03, 0.03)
+    # sim.fill_grid_random(0.05, 0.05, 0.05)
     # Run the simulation
     sim.start()
