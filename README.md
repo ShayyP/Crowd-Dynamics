@@ -1,6 +1,16 @@
 # Crowd Dynamics
  Python project developed alongside my final year thesis.
 
+# Required libraries
+The following libraries must be installed using pip before running the application:
+-Pygame
+-Matplotlib
+-NumPy
+
+# How to run
+-Edit simulation parameters as necessary, these are found at the end of main.py.
+-Run main.py to start.
+
 # Controls
 -Left click on a cell to place a patient agent, clicking the agent again changes their strategy.
 -Click the middle mouse button to place an obstacle in a cell.
